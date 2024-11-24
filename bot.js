@@ -1,18 +1,46 @@
-require('dotenv').config();
-const { Telegraf } = require('telegraf');
-const fetch = require('node-fetch');
+import dotenv from 'dotenv';
+import { Bot } from 'grammy';
+import fetch from 'node-fetch';
+import { cleanEnv, str, num } from 'envalid';
+import fs from 'fs';
 
-// Загрузка токенов из файла .env
-const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+dotenv.config();
 
-// Проверка на наличие API-ключа
+const env = cleanEnv(process.env, {
+    TELEGRAM_TOKEN: str(),
+    OPENAI_API_KEY: str(),
+    PROMPT: str(),
+    MODEL_ID: str(),
+    MODEL_TEMPERATURE: num(),
+    MODEL_TOP_P: num(),
+    MODEL_MAX_TOKENS: num(),
+    MODEL_FREQUENCY_PENALTY: num(),
+    MODEL_PRESENCE_PENALTY: num()
+});
+
+const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
+const OPENAI_API_KEY = env.OPENAI_API_KEY;
+const PROMPT = fs.readFileSync('prompt.txt', 'utf-8');
+const modelSettings = {
+    modelID: env.MODEL_ID,
+    temperature: env.MODEL_TEMPERATURE,
+    top_p: env.MODEL_TOP_P,
+    max_tokens: env.MODEL_MAX_TOKENS,
+    frequency_penalty: env.MODEL_FREQUENCY_PENALTY,
+    presence_penalty: env.MODEL_PRESENCE_PENALTY
+};
+
+if (!TELEGRAM_TOKEN) {
+    console.error("Ошибка: TELEGRAM_TOKEN отсутствует.");
+    process.exit(1);
+}
 if (!OPENAI_API_KEY) {
-    console.error("Ошибка: API-ключ OpenAI отсутствует.");
+    console.error("Ошибка: OPENAI_API_KEY отсутствует.");
     process.exit(1);
 }
 
-// Функция для отправки сообщения в Fine-Tuned модель через OpenAI API
+const bot = new Bot(TELEGRAM_TOKEN);
+
 async function getGPTResponse(message) {
     try {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -22,28 +50,27 @@ async function getGPTResponse(message) {
                 'Authorization': `Bearer ${OPENAI_API_KEY}`
             },
             body: JSON.stringify({
-                model: "ft:gpt-4o-mini-2024-07-18:personal:hrass:AVkTnruE", // Ваш Fine-Tuned Model ID
+                model: modelSettings.modelID,
                 messages: [
-                    { role: "system", content: "Ты специалист в сфере управления персоналом в Центре Занятости населения Российской Федерации и знаешь содержание всех основных HR (Human Resource) процессов. Ты отвечаешь за следующие задачи: 1. Подбор персонала Центра Занятости Населения Российской Федерации. 2. Адаптация персонала Центра Занятости Населения Российской Федерации. 3. Оценка качества работы персонала Центра Занятости Населения Российской Федерации. 4. Обучение персонала Центра Занятости Населения Российской Федерации. 5. Мотивация персонала Центра Занятости Населения Российской Федерации. 6. Управление кадровым резервом Центра Занятости Населения Российской Федерации. 7. Управление корпоративной культурой Центра Занятости Населения Российской Федерации. 8. Планирование работы с персоналом Центра Занятости Населения Российской Федерации. 9. Распределение ответственности и полномочий. В своей работе ты руководствуешься исключительно загруженной Базой Знания." },
+                    { role: "system", content: PROMPT },
                     { role: "user", content: message }
                 ],
-                max_tokens: 1000,
-                temperature: 0.5,
-                top_p: 0.5,
-                frequency_penalty: 0,
-                presence_penalty: 0
+                max_tokens: modelSettings.max_tokens,
+                temperature: modelSettings.temperature,
+                top_p: modelSettings.top_p,
+                frequency_penalty: modelSettings.frequency_penalty,
+                presence_penalty: modelSettings.presence_penalty
             })
         });
 
         const data = await response.json();
-        console.log('Ответ от OpenAI:', data); // Логирование ответа для отладки
+        console.log('Ответ от OpenAI:', data);
 
         if (data.error) {
             console.error('Ошибка от OpenAI:', data.error);
             return 'Произошла ошибка при обработке вашего запроса.';
         }
 
-        // Проверка структуры ответа
         if (data && data.choices && data.choices.length > 0) {
             return data.choices[0].message.content.trim();
         } else {
@@ -56,11 +83,11 @@ async function getGPTResponse(message) {
     }
 }
 
-// Настройка команды /start
-bot.start((ctx) => ctx.reply('Привет! Я твой персонализированный помощник. Напиши что-нибудь, и я отвечу!'));
+bot.command('start', (ctx) => {
+    ctx.reply('Привет! Я твой персонализированный помощник. Напиши что-нибудь, и я отвечу!');
+});
 
-// Обработка текстовых сообщений
-bot.on('text', async (ctx) => {
+bot.on('message:text', async (ctx) => {
     const userMessage = ctx.message.text;
     try {
         const gptResponse = await getGPTResponse(userMessage);
@@ -71,6 +98,5 @@ bot.on('text', async (ctx) => {
     }
 });
 
-// Запуск бота
-bot.launch();
+bot.start();
 console.log('Бот запущен!');
