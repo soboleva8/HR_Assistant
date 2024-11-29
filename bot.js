@@ -9,6 +9,7 @@ dotenv.config();
 const env = cleanEnv(process.env, {
     TELEGRAM_TOKEN: str(),
     OPENAI_API_KEY: str(),
+    TELEGRAM_GROUP_ID: num(),
     PROMPT: str(),
     MODEL_ID: str(),
     MODEL_TEMPERATURE: num(),
@@ -20,6 +21,7 @@ const env = cleanEnv(process.env, {
 
 const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = env.OPENAI_API_KEY;
+const GROUP_ID = env.TELEGRAM_GROUP_ID;
 const PROMPT = fs.readFileSync('prompt.txt', 'utf-8');
 const modelSettings = {
     modelID: env.MODEL_ID,
@@ -83,11 +85,20 @@ async function getGPTResponse(message) {
     }
 }
 
+// Команда /start
 bot.command('start', (ctx) => {
-    ctx.reply('Привет! Я твой персонализированный помощник. Напиши что-нибудь, и я отвечу!');
+    if (ctx.chat.id !== GROUP_ID) {
+        return; // Игнорируем команды вне группы
+    }
+    ctx.reply('Привет! Я отвечаю только участникам этой группы.');
 });
 
+// Обработка текстовых сообщений
 bot.on('message:text', async (ctx) => {
+    if (ctx.chat.id !== GROUP_ID) {
+        return; // Игнорируем сообщения вне группы
+    }
+
     const userMessage = ctx.message.text;
     try {
         const gptResponse = await getGPTResponse(userMessage);
@@ -98,5 +109,6 @@ bot.on('message:text', async (ctx) => {
     }
 });
 
+// Запуск бота
 bot.start();
 console.log('Бот запущен!');
