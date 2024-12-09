@@ -111,7 +111,7 @@ bot.on('message:text', async (ctx) => {
     const userMessage = ctx.message.text;
 
     
-    if (!isRelevantQuestion(userMessage)) {
+    /*if (!isRelevantQuestion(userMessage)) {
         ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
         return;
     }
@@ -122,7 +122,8 @@ bot.on('message:text', async (ctx) => {
         ctx.reply('Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.');
         return;
     }
-    
+    */
+   
     try {
         const gptResponse = await getGPTResponse(userMessage);
         ctx.reply(gptResponse);
