@@ -3,6 +3,7 @@ import { Bot } from 'grammy';
 import fetch from 'node-fetch';
 import { cleanEnv, str, num } from 'envalid';
 import fs from 'fs';
+import { checkRelevance } from './relevanceChecker.js';
 
 dotenv.config();
 
@@ -22,7 +23,7 @@ const env = cleanEnv(process.env, {
 const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = env.OPENAI_API_KEY;
 const GROUP_ID = env.TELEGRAM_GROUP_ID;
-const PROMPT = fs.readFileSync('prompt.txt', 'utf-8');
+const PROMPT = fs.readFileSync('prompt.txt', 'utf-8').split('\n').map(line => line.trim()).join(' ');
 const modelSettings = {
     modelID: env.MODEL_ID,
     temperature: env.MODEL_TEMPERATURE,
@@ -31,6 +32,14 @@ const modelSettings = {
     frequency_penalty: env.MODEL_FREQUENCY_PENALTY,
     presence_penalty: env.MODEL_PRESENCE_PENALTY
 };
+
+const keywordsFile = fs.readFileSync('keywords.txt', 'utf-8');
+const keywords = keywordsFile.split('\n').map((word) => word.trim()).filter(Boolean);
+
+
+function isRelevantQuestion(message) {
+    return keywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()));
+}
 
 if (!TELEGRAM_TOKEN) {
     console.error("Ошибка: TELEGRAM_TOKEN отсутствует.");
@@ -100,6 +109,20 @@ bot.on('message:text', async (ctx) => {
     }
 
     const userMessage = ctx.message.text;
+
+    
+    if (!isRelevantQuestion(userMessage)) {
+        ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
+        return;
+    }
+    
+    const isRelevant = await checkRelevance(userMessage);
+
+    if (!isRelevant) {
+        ctx.reply('Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.');
+        return;
+    }
+    
     try {
         const gptResponse = await getGPTResponse(userMessage);
         ctx.reply(gptResponse);
