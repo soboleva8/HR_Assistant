@@ -3,7 +3,6 @@ import { Bot } from 'grammy';
 import fetch from 'node-fetch';
 import { cleanEnv, str, num } from 'envalid';
 import fs from 'fs';
-import { checkRelevance } from './relevanceChecker.js';
 
 dotenv.config();
 
@@ -110,16 +109,8 @@ bot.on('message:text', async (ctx) => {
 
     const userMessage = ctx.message.text;
 
-    
     if (!isRelevantQuestion(userMessage)) {
         ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
-    
-    const isRelevant = await checkRelevance(userMessage);
-
-    if (!isRelevant) {
-        ctx.reply('Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.');
         return;
     }
     
