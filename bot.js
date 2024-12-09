@@ -33,14 +33,6 @@ const modelSettings = {
     presence_penalty: env.MODEL_PRESENCE_PENALTY
 };
 
-const keywordsFile = fs.readFileSync('keywords.txt', 'utf-8');
-const keywords = keywordsFile.split('\n').map((word) => word.trim()).filter(Boolean);
-
-
-function isRelevantQuestion(message) {
-    return keywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()));
-}
-
 if (!TELEGRAM_TOKEN) {
     console.error("Ошибка: TELEGRAM_TOKEN отсутствует.");
     process.exit(1);
@@ -109,12 +101,6 @@ bot.on('message:text', async (ctx) => {
     }
 
     const userMessage = ctx.message.text;
-
-    
-    if (!isRelevantQuestion(userMessage)) {
-        ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
     
     const isRelevant = await checkRelevance(userMessage);
 
