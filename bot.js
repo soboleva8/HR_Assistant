@@ -1,9 +1,9 @@
 import dotenv from 'dotenv';
 import { Bot } from 'grammy';
-import fetch from 'node-fetch';
 import { cleanEnv, str, num } from 'envalid';
 import fs from 'fs';
-import { checkRelevance } from './relevanceChecker.js';
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { ChatOpenAI } from "@langchain/openai";
 
 dotenv.config();
 
@@ -11,7 +11,6 @@ const env = cleanEnv(process.env, {
     TELEGRAM_TOKEN: str(),
     OPENAI_API_KEY: str(),
     TELEGRAM_GROUP_ID: num(),
-    PROMPT: str(),
     MODEL_ID: str(),
     MODEL_TEMPERATURE: num(),
     MODEL_TOP_P: num(),
@@ -23,7 +22,9 @@ const env = cleanEnv(process.env, {
 const TELEGRAM_TOKEN = env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = env.OPENAI_API_KEY;
 const GROUP_ID = env.TELEGRAM_GROUP_ID;
+
 const PROMPT = fs.readFileSync('prompt.txt', 'utf-8').split('\n').map(line => line.trim()).join(' ');
+
 const modelSettings = {
     modelID: env.MODEL_ID,
     temperature: env.MODEL_TEMPERATURE,
@@ -33,102 +34,93 @@ const modelSettings = {
     presence_penalty: env.MODEL_PRESENCE_PENALTY
 };
 
-const keywordsFile = fs.readFileSync('keywords.txt', 'utf-8');
-const keywords = keywordsFile.split('\n').map((word) => word.trim()).filter(Boolean);
+const model = new ChatOpenAI({
+    apiKey: OPENAI_API_KEY,
+    modelName: modelSettings.modelID,
+    temperature: modelSettings.temperature,
+    maxTokens: modelSettings.max_tokens,
+    top_p: modelSettings.top_p,
+    frequency_penalty: modelSettings.frequency_penalty,
+    presence_penalty: modelSettings.presence_penalty
+});
 
+const promptTemplate = ChatPromptTemplate.fromMessages([
+    { role: "system", content: PROMPT },
+    { role: "user", content: "{input}" }
+]);
 
-function isRelevantQuestion(message) {
-    return keywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()));
+const relevancePromptTemplate = ChatPromptTemplate.fromMessages([
+    { role: "system", content: "Ты эксперт в управлении персоналом (HR) и кадровых процессах. " +
+        "Ты анализируешь вопросы пользователей и определяешь, можно ли ответить на них в контексте HR. " +
+        "Если вопрос напрямую связан с HR, верни 'релевантно'. " +
+        "Если вопрос общего характера, попробуй найти связь с HR и верни 'частично релевантно'. " +
+        "Если вопрос совершенно не связан с HR, верни 'нерелевантно'." },
+    { role: "user", content: "{input}" }
+]);
+
+async function checkRelevance(question) {
+    try {
+        const relevanceResponse = await relevancePromptTemplate.invoke({ input: question });
+        console.log("[DEBUG] Ответ relevancePromptTemplate.invoke:", relevanceResponse);
+
+        // Извлекаем текст или задаём значение по умолчанию
+        const relevanceText = relevanceResponse?.text?.trim().toLowerCase() || "нерелевантно";
+        console.log(`[INFO] Результат проверки релевантности: ${relevanceText}`);
+
+        return relevanceText; // Возвращаем значение "общее", "частично релевантно", "релевантно" или "нерелевантно"
+    } catch (error) {
+        console.error(`[ERROR] Ошибка проверки релевантности: ${error.message}`);
+        return "нерелевантно"; // По умолчанию считаем нерелевантным
+    }
 }
 
-if (!TELEGRAM_TOKEN) {
-    console.error("Ошибка: TELEGRAM_TOKEN отсутствует.");
-    process.exit(1);
-}
-if (!OPENAI_API_KEY) {
-    console.error("Ошибка: OPENAI_API_KEY отсутствует.");
-    process.exit(1);
+async function generateResponse(question) {
+    try {
+        const response = await promptTemplate.invoke({ input: question });
+        console.log(`[INFO] Ответ модели: ${response}`);
+        return response.trim();
+    } catch (error) {
+        console.error(`[ERROR] Ошибка генерации ответа: ${error.message}`);
+        return "Произошла ошибка при обработке вашего запроса.";
+    }
 }
 
 const bot = new Bot(TELEGRAM_TOKEN);
 
-async function getGPTResponse(message) {
-    try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENAI_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: modelSettings.modelID,
-                messages: [
-                    { role: "system", content: PROMPT },
-                    { role: "user", content: message }
-                ],
-                max_tokens: modelSettings.max_tokens,
-                temperature: modelSettings.temperature,
-                top_p: modelSettings.top_p,
-                frequency_penalty: modelSettings.frequency_penalty,
-                presence_penalty: modelSettings.presence_penalty
-            })
-        });
-
-        const data = await response.json();
-        console.log('Ответ от OpenAI:', data);
-
-        if (data.error) {
-            console.error('Ошибка от OpenAI:', data.error);
-            return 'Произошла ошибка при обработке вашего запроса.';
-        }
-
-        if (data && data.choices && data.choices.length > 0) {
-            return data.choices[0].message.content.trim();
-        } else {
-            console.error('Неверный формат ответа от API OpenAI:', data);
-            return 'Извините, я не смог получить ответ. Попробуйте еще раз позже.';
-        }
-    } catch (error) {
-        console.error('Ошибка при обращении к API OpenAI:', error);
-        return 'Произошла ошибка при обращении к GPT. Попробуйте позже.';
-    }
-}
-
-// Команда /start
 bot.command('start', (ctx) => {
-    if (ctx.chat.id !== GROUP_ID) {
-        return; // Игнорируем команды вне группы
-    }
+    if (ctx.chat.id !== GROUP_ID) return;
     ctx.reply('Привет! Я отвечаю только участникам этой группы.');
 });
 
-// Обработка текстовых сообщений
 bot.on('message:text', async (ctx) => {
-    if (ctx.chat.id !== GROUP_ID) {
-        return; // Игнорируем сообщения вне группы
-    }
+    if (ctx.chat.id !== GROUP_ID) return;
 
     const userMessage = ctx.message.text;
+    console.log(`[INFO] Новый вопрос от пользователя: ${userMessage}`);
 
-    
-    /*if (!isRelevantQuestion(userMessage)) {
-        ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
-    
-    const isRelevant = await checkRelevance(userMessage);
-
-    if (!isRelevant) {
-        ctx.reply('Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
-    */
-   
     try {
-        const gptResponse = await getGPTResponse(userMessage);
+        const relevance = await checkRelevance(userMessage);
+
+        if (relevance === "общее") {
+            ctx.reply("Привет! Как я могу помочь вам сегодня?");
+            return;
+        }
+
+        if (relevance === "частично релевантно") {
+            ctx.reply("Этот вопрос частично связан с HR. Вот что я могу сказать:");
+            return;
+        }
+
+        if (relevance === "нерелевантно") {
+            ctx.reply("Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.");
+            return;
+        }
+
+        // Генерация ответа
+        const gptResponse = await generateResponse(userMessage);
         ctx.reply(gptResponse);
     } catch (error) {
-        console.error('Ошибка при обработке сообщения:', error);
+        console.error(`[ERROR] Ошибка обработки сообщения: ${error.message}`);
         ctx.reply('Произошла ошибка. Попробуйте позже.');
     }
 });
