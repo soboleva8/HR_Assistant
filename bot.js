@@ -3,7 +3,6 @@ import { Bot } from 'grammy';
 import fetch from 'node-fetch';
 import { cleanEnv, str, num } from 'envalid';
 import fs from 'fs';
-import { checkRelevance } from './relevanceChecker.js';
 
 dotenv.config();
 
@@ -11,7 +10,6 @@ const env = cleanEnv(process.env, {
     TELEGRAM_TOKEN: str(),
     OPENAI_API_KEY: str(),
     TELEGRAM_GROUP_ID: num(),
-    PROMPT: str(),
     MODEL_ID: str(),
     MODEL_TEMPERATURE: num(),
     MODEL_TOP_P: num(),
@@ -32,14 +30,6 @@ const modelSettings = {
     frequency_penalty: env.MODEL_FREQUENCY_PENALTY,
     presence_penalty: env.MODEL_PRESENCE_PENALTY
 };
-
-const keywordsFile = fs.readFileSync('keywords.txt', 'utf-8');
-const keywords = keywordsFile.split('\n').map((word) => word.trim()).filter(Boolean);
-
-
-function isRelevantQuestion(message) {
-    return keywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()));
-}
 
 if (!TELEGRAM_TOKEN) {
     console.error("Ошибка: TELEGRAM_TOKEN отсутствует.");
@@ -94,45 +84,78 @@ async function getGPTResponse(message) {
     }
 }
 
-// Команда /start
+function formatList(text) {
+    return text
+        // Добавляем перенос строки перед каждым номером списка (1., 2., ...)
+        .replace(/(\d+)\.\s*/g, '\n$1. ') 
+        // Убираем переносы строк, если они следуют сразу за номером списка
+        .replace(/(\d+\.\s*)\n/g, '$1') 
+        // Добавляем перенос строки после заголовка (до первого предложения после номера)
+        .replace(/(\d+\.\s+[^\.\n]+\.)(\s+)/g, '$1\n') 
+        // Добавляем перенос строки после "!" и "?"
+        .replace(/([!?])\s+/g, '$1\n') 
+        // Добавляем перенос строки после ".", только если это конец предложения, а не номер списка
+        .replace(/(?<!\d)([.])\s+(?=[А-ЯA-Z])/g, '$1\n') 
+        // Убираем лишние переносы строк
+        .replace(/\n+/g, '\n') 
+        // Убираем пробелы в начале и конце текста
+        .trim();
+}
+
+async function sendLongMessage(ctx, text) {
+    const MAX_LENGTH = 4096;
+
+    if (text.length <= MAX_LENGTH) {
+        await ctx.reply(text);
+        return;
+    }
+
+    const chunks = [];
+    let remainingText = text;
+
+    while (remainingText.length > 0) {
+        let chunk = remainingText.slice(0, MAX_LENGTH);
+
+        if (remainingText.length > MAX_LENGTH) {
+            const lastPeriodIndex = chunk.lastIndexOf('.'); // Ищем последнюю точку
+            if (lastPeriodIndex !== -1) {
+                chunk = remainingText.slice(0, lastPeriodIndex + 1); // Захватываем до точки
+            }
+        }
+
+        chunks.push(chunk.trim()); // Добавляем часть в массив, убирая лишние пробелы
+        remainingText = remainingText.slice(chunk.length).trim(); // Убираем обработанную часть
+    }
+
+    // Отправляем каждую часть по очереди
+    for (const chunk of chunks) {
+        await ctx.reply(chunk);
+    }
+}
+
 bot.command('start', (ctx) => {
     if (ctx.chat.id !== GROUP_ID) {
-        return; // Игнорируем команды вне группы
+        return;
     }
     ctx.reply('Привет! Я отвечаю только участникам этой группы.');
 });
 
-// Обработка текстовых сообщений
 bot.on('message:text', async (ctx) => {
     if (ctx.chat.id !== GROUP_ID) {
-        return; // Игнорируем сообщения вне группы
+        return;
     }
 
     const userMessage = ctx.message.text;
-
-    
-    /*if (!isRelevantQuestion(userMessage)) {
-        ctx.reply('Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
-    
-    const isRelevant = await checkRelevance(userMessage);
-
-    if (!isRelevant) {
-        ctx.reply('Ваш вопрос не связан с темой HR. Я могу помочь только с вопросами, касающимися управления персоналом.');
-        return;
-    }
-    */
    
     try {
-        const gptResponse = await getGPTResponse(userMessage);
-        ctx.reply(gptResponse);
+        const gptResponse = await getGPTResponse(userMessage); // Генерация ответа
+        const formattedResponse = formatList(gptResponse);
+        await sendLongMessage(ctx, formattedResponse); // Отправка длинного ответа
     } catch (error) {
-        console.error('Ошибка при обработке сообщения:', error);
+        console.error(`[ERROR] Ошибка обработки сообщения: ${error.message}`);
         ctx.reply('Произошла ошибка. Попробуйте позже.');
     }
 });
 
-// Запуск бота
 bot.start();
 console.log('Бот запущен!');
